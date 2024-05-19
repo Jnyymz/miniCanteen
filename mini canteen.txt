@@ -1,0 +1,272 @@
+<?php
+session_start();
+
+// Database connection
+$servername = "localhost";
+$username = "root";
+$password = ""; // your MySQL password
+$dbname = "user"; // your existing database name
+
+$conn = new mysqli($servername, $username, $password, $dbname);
+
+if ($conn->connect_error) {
+    die("Connection failed: " . $conn->connect_error);
+}
+
+// Ensure the users table exists and has the correct schema
+$sql = "CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL
+)";
+$conn->query($sql);
+
+// Create orders table 
+$sql = "CREATE TABLE IF NOT EXISTS orders (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    item VARCHAR(50),
+    quantity INT,
+    price DECIMAL(10, 2),
+    cash DECIMAL(10, 2),
+    change_amount DECIMAL(10, 2),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+)";
+$conn->query($sql);
+
+// Handle user registration
+if (isset($_POST['register'])) {
+    $username = $_POST['username'];
+    $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+
+    $stmt = $conn->prepare("SELECT id FROM users WHERE username = ?");
+    $stmt->bind_param("s", $username);
+    $stmt->execute();
+    $stmt->store_result();
+
+    if ($stmt->num_rows > 0) {
+        $registerError = "Username already exists.";
+    } else {
+        $stmt = $conn->prepare("INSERT INTO users (username, password) VALUES (?, ?)");
+        $stmt->bind_param("ss", $username, $password);
+        if ($stmt->execute()) {
+            $registerSuccess = "Registration successful. Please log in.";
+        } else {
+            $registerError = "Error during registration.";
+        }
+    }
+    $stmt->close();
+}
+
+// Handle user login
+if (isset($_POST['login'])) {
+    $username = $_POST['username'];
+    $password = $_POST['password'];
+
+    $stmt = $conn->prepare("SELECT id, password FROM users WHERE username = ?");
+    $stmt->bind_param("s", $username);
+    $stmt->execute();
+    $stmt->store_result();
+    $stmt->bind_result($userId, $storedPassword);
+    $stmt->fetch();
+
+    if ($stmt->num_rows > 0 && password_verify($password, $storedPassword)) {
+        $_SESSION['username'] = $username;
+        $_SESSION['user_id'] = $userId;
+        header("Location: index.php");
+        exit();
+    } else {
+        $loginError = "Invalid username or password.";
+    }
+    $stmt->close();
+}
+
+// Handle logout
+if (isset($_GET['logout'])) {
+    session_destroy();
+    header("Location: index.php");
+    exit();
+}
+
+// Handle order form submission
+if (isset($_POST['order'])) {
+    $item = $_POST['item'];
+    $quantity = $_POST['quantity'];
+    $cash = $_POST['cash'];
+
+    $menu = [
+        'Burger' => 100,
+        'Coke' => 80,
+        'Fries' => 50,
+        'Spaghetti' => 120
+    ];
+
+    $price = $menu[$item] * $quantity;
+    $change = $cash - $price;
+    $userId = $_SESSION['user_id'];
+
+    $stmt = $conn->prepare("INSERT INTO orders (user_id, item, quantity, price, cash, change_amount) VALUES (?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("isiddd", $userId, $item, $quantity, $price, $cash, $change);
+    $stmt->execute();
+    $stmt->close();
+}
+
+// Fetch orders for the logged-in user
+$orders = [];
+if (isset($_SESSION['user_id'])) {
+    $stmt = $conn->prepare("SELECT item, quantity, price, cash, change_amount FROM orders WHERE user_id = ?");
+    $stmt->bind_param("i", $_SESSION['user_id']);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    while ($row = $result->fetch_assoc()) {
+        $orders[] = $row;
+    }
+    $stmt->close();
+}
+
+$conn->close();
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Management System</title>
+    <style>
+        body{
+            background-color: #EEF7FF;
+        }
+        .container {
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #7AB2B2;
+        }
+
+        input[type="text"], input[type="number"], input[type="password"], select, button {
+            display: block;
+            margin-bottom: 10px;
+            width: 95%;
+            padding: 8px;
+            background-color: #EEF7FF;
+        }
+
+        button {
+            padding: 10px 20px;
+            background-color: #4D869C;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background-color: #CDE8E5;
+        }
+        td {
+            background-color: #EEF7FF;
+        }
+        h1{
+            color: #EEF7FF;
+            text-align: center;
+        }
+        
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Janimah's Mini Canteen</h1>
+
+        <?php if (isset($_SESSION['username'])): ?>
+            <p>Welcome, <?php echo htmlspecialchars($_SESSION['username']); ?>! <a href="?logout">Logout</a></p>
+            <form action="" method="post">
+                <label for="item">Select Item:</label>
+                <select id="item" name="item" required>
+                    <option value="Burger">Burger (₱100)</option>
+                    <option value="Coke">Coke (₱80)</option>
+                    <option value="Fries">Fries (₱50)</option>
+                    <option value="Spaghetti">Spaghetti (₱120)</option>
+                </select>
+                <label for="quantity">Quantity:</label>
+                <input type="number" id="quantity" name="quantity" min="1" required>
+                <label for="cash">Cash (₱):</label>
+                <input type="number" id="cash" name="cash" min="0" required>
+                <button type="submit" name="order">Submit Order</button>
+            </form>
+            <hr>
+            <h2>Receipt</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Item</th>
+                        <th>Quantity</th>
+                        <th>Total Price (₱)</th>
+                        <th>Cash (₱)</th>
+                        <th>Change (₱)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($orders as $order): ?>
+                        <tr>
+                            <td><?php echo htmlspecialchars($order['item']); ?></td>
+                            <td><?php echo htmlspecialchars($order['quantity']); ?></td>
+                            <td><?php echo htmlspecialchars($order['price']); ?></td>
+                            <td><?php echo htmlspecialchars($order['cash']); ?></td>
+                            <td><?php echo htmlspecialchars($order['change_amount']); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php else: ?>
+            <h2>Login</h2>
+            <form action="" method="post">
+                <label for="username">Username:</label>
+                <input type="text" id="username" name="username" required>
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" required>
+                <button type="submit" name="login">Login</button>
+                <?php if (isset($loginError)): ?>
+                    <p style="color: red;"><?php echo htmlspecialchars($loginError); ?></p>
+                <?php endif; ?>
+            </form>
+            <hr>
+            <h2>Register</h2>
+            <form action="" method="post">
+                <label for="username">Username:</label>
+                <input type="text" id="username" name="username" required>
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" required>
+                <button type="submit" name="register">Register</button>
+                <?php if (isset($registerError)): ?>
+                    <p style="color: red;"><?php echo htmlspecialchars($registerError); ?></p>
+                <?php endif; ?>
+                <?php if (isset($registerSuccess)): ?>
+                    <p style="color: green;"><?php echo htmlspecialchars($registerSuccess); ?></p>
+                <?php endif; ?>
+            </form>
+        <?php endif; ?>
+    </div>
+</body>
+</html>
+
+               
